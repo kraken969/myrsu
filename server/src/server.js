@@ -1,6 +1,8 @@
 require('dotenv').config();
 
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
@@ -40,7 +42,10 @@ const configuredOrigins = (process.env.CORS_ORIGIN || '*')
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-app.use(helmet());
+// Firebase Auth uses popup and Google endpoints from the Flutter browser app.
+// Keep Helmet's safe headers but leave CSP to the Flutter/Firebase deployment
+// configuration so the existing login flow is not blocked by a default policy.
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors({
   origin(origin, callback) {
     if (!origin || configuredOrigins.includes('*') || configuredOrigins.includes(origin)) {
@@ -51,6 +56,15 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+
+// In the Railway Docker image, Flutter's compiled web files are copied to
+// /app/build/web. The relative path also works when this server is run from
+// the repository root during local development.
+const flutterWebRoot = path.resolve(__dirname, '../../build/web');
+const flutterIndex = path.join(flutterWebRoot, 'index.html');
+if (fs.existsSync(flutterWebRoot)) {
+  app.use(express.static(flutterWebRoot, { index: false }));
+}
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'myrsu-api', timestamp: new Date().toISOString() });
@@ -201,6 +215,15 @@ app.delete('/api/events/:id', requireUser, asyncRoute(async (req, res) => {
   return res.status(204).send();
 }));
 
+// Flutter Web is a single-page application. Send its index file for browser
+// routes that are not API routes, while leaving unknown API paths as 404s.
+app.get(/^(?!\/api(?:\/|$)).*/, (_req, res) => {
+  if (!fs.existsSync(flutterIndex)) {
+    return res.status(503).json({ error: 'Flutter web build is not available' });
+  }
+  return res.sendFile(flutterIndex);
+});
+
 app.use((error, _req, res, _next) => {
   console.error(error);
   if (res.headersSent) return;
@@ -209,8 +232,4 @@ app.use((error, _req, res, _next) => {
 
 app.listen(port, '0.0.0.0', () => {
   console.log(`MyRSU API listening on port ${port}`);
-});
-
-app.get('/', (req, res) => {
-  res.json({ service: 'myrsu-api', status: 'running' });
 });
