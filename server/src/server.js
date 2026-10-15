@@ -210,3 +210,7 @@ app.use((error, _req, res, _next) => {
 app.listen(port, '0.0.0.0', () => {
   console.log(`MyRSU API listening on port ${port}`);
 });
+
+app.get('/', (req, res) => {
+  res.json({ service: 'myrsu-api', status: 'running' });
+});
